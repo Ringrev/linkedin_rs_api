@@ -18,6 +18,7 @@ use reqwest::{Request, RequestBuilder};
 
 use serde_json::Value;
 use std::fs::File;
+use seed::header;
 use url::Url;
 
 #[derive(Debug, Clone)]
@@ -45,6 +46,7 @@ impl HttpClient for ReqwestClient {
     async fn request(
         &self,
         request: http::Request<String>,
+        token:String
     ) -> Result<http::Response<String>, ClientErr> {
         // No version on the response when using from client but works when using from server (backend)
         let version = request.version().clone();
@@ -59,10 +61,11 @@ impl HttpClient for ReqwestClient {
             Method::DELETE => Client::new().delete(url),
             m @ _ => return Err(ClientErr::HttpClient(format!("invalid method {}", m))),
         };
-
+          let bear_token = "Bearer ".to_owned() +&token;
         let resp = req
-            .header("Content-Type","application/x-www-form-urlencoded")
-            .header( "Content-Length","0")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Authorization", bear_token)
+            .header("Content-Length", "0")
             .send()
             .await
             .map_err(|e| ClientErr::HttpClient(format!("{:?}", e)))?;
@@ -91,7 +94,7 @@ impl HttpClient for ReqwestClient {
 
     async fn auth_request(
         &self,
-        request: http::Request<String>
+        request: http::Request<String>,
     ) -> Result<http::Response<String>, ClientErr> {
         // No version on the response when using from client but works when using from server (backend)
         let version = request.version().clone();
@@ -106,8 +109,8 @@ impl HttpClient for ReqwestClient {
         };
 
         let resp = req
-            .header("Content-Type","application/x-www-form-urlencoded")
-            .header( "Authorization" ,token)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Authorization", token)
             .send()
             .await
             .map_err(|e| ClientErr::HttpClient(format!("{:?}", e)))?;
@@ -137,14 +140,13 @@ impl HttpClient for ReqwestClient {
     async fn video_request(
         &self,
         request: http::Request<Value>,
-        token:String
+        token: String,
     ) -> Result<http::Response<String>, ClientErr> {
         //et req: Request = request.try_into().unwrap();
         // let req: RequestBuilder = generic_req::<FormData>(request).unwrap();
         let url = request.uri().to_string();
         let method = request.method().clone();
         let body = request.body().to_owned();
-
         let req = match method {
             Method::GET => Client::new().get(url),
             Method::POST => Client::new().post(url),
@@ -153,14 +155,23 @@ impl HttpClient for ReqwestClient {
 
             m @ _ => return Err(ClientErr::HttpClient(format!("invalid method {}", m))),
         };
-        let bear_token = "Bearer ".to_owned() + &token;
-        let resp = req
-            .header("X-Restli-Protocol-Version", "2.0.0")
-            .header("Authorization" ,bear_token)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ClientErr::HttpClient(format!("{:?}", e)))?;
+        let resp = if token.is_empty() {
+            req.header("X-Restli-Protocol-Version", "2.0.0")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ClientErr::HttpClient(format!("{:?}", e)))?
+        } else {
+            let bear_token = "Bearer ".to_owned() + &token;
+            req.header("X-Restli-Protocol-Version", "2.0.0")
+                .header("Content-Type", "application/json")
+                .header("Authorization", bear_token)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ClientErr::HttpClient(format!("{:?}", e)))?
+        };
+
         // No version on the response when using from client but works when using from server (backend)
         let version = request.version();
         let status_code = resp.status();
@@ -187,7 +198,7 @@ impl HttpClient for ReqwestClient {
     async fn file_upload_request(
         &self,
         request: http::Request<Vec<u8>>,
-        token:String
+        token: String,
     ) -> Result<http::Response<String>, ClientErr> {
         //et req: Request = request.try_into().unwrap();
         // let req: RequestBuilder = generic_req::<FormData>(request).unwrap();
@@ -202,17 +213,26 @@ impl HttpClient for ReqwestClient {
             Method::PUT => Client::new().put(url),
             m @ _ => return Err(ClientErr::HttpClient(format!("invalid method {}", m))),
         };
-       // let file_size = body.metadata().unwrap().len().clone();
+        // let file_size = body.metadata().unwrap().len().clone();
         use std::fs::File;
-        use std::io::BufReader;
         use std::io::prelude::*;
+        use std::io::BufReader;
+        let resp = if method == Method::PUT {
+            println!("printing here ");
+            req.header("Content-Type","application/octet-stream" )
+                .header("Authorization", bear_token)
+                .body(Body::from(body.to_vec()))
+                .send()
+                .await
+                .map_err(|e| ClientErr::HttpClient(format!("{:?}", e)))?
+        } else {
+            req.header("Authorization", bear_token)
+                .body(Body::from(body.to_vec()))
+                .send()
+                .await
+                .map_err(|e| ClientErr::HttpClient(format!("{:?}", e)))?
+        };
 
-        let resp = req
-            .header("Authorization" ,bear_token)
-            .body(Body::from(body.to_vec()))
-            .send()
-            .await
-            .map_err(|e| ClientErr::HttpClient(format!("{:?}", e)))?;
         // No version on the response when using from client but works when using from server (backend)
         let version = request.version();
         let status_code = resp.status();
